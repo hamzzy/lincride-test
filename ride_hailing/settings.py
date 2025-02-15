@@ -74,7 +74,7 @@ LOGGING = {
         'file': {
             'level': 'INFO',
             'class': 'logging.FileHandler',
-            'filename': 'pricing_api.log',
+            'filename': 'ride_hailing.log',
             'formatter': 'verbose'
         },
     },
@@ -95,7 +95,7 @@ LOGGING = {
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": "redis://127.0.0.1:6379/1",
+        "LOCATION": "redis://redis:6379/1",
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
         }

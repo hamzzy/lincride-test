@@ -3,7 +3,7 @@ FROM python:3.11-slim-buster
 
 # Set environment variables
 ENV PYTHONUNBUFFERED 1
-ENV DJANGO_SETTINGS_MODULE pricing_api.settings
+ENV DJANGO_SETTINGS_MODULE ride_hailing.settings
 
 # Working directory
 WORKDIR /app
@@ -24,15 +24,10 @@ COPY . .
 # Run migrations
 RUN python manage.py migrate
 
-# Create superuser (non-interactive) - remove in production or pass variables securely
-RUN python manage.py createsuperuser --noinput --username admin --email admin@example.com
-
-# Load initial data
-#CMD python manage.py loaddata initial_data.json
 
 # Expose port
 EXPOSE 8000
 
 # Command to run the application
-CMD ["daphne", "pricing_api.asgi:application", "--port", "8000", "--bind", "0.0.0.0"]
+CMD ["daphne", "ride_hailing.asgi:application", "--port", "8000", "--bind", "0.0.0.0"]
 

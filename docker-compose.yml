@@ -1,16 +1,15 @@
-version: "3.9"
 services:
   web:
     build: .
-    command: daphne pricing_api.asgi:application --port 8000 --bind 0.0.0.0
     volumes:
       - .:/app
     ports:
       - "8000:8000"
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     environment:
-      - DJANGO_SETTINGS_MODULE=pricing_api.settings
+      - DJANGO_SETTINGS_MODULE=ride_hailing.settings
       - REDIS_HOST=redis
       - REDIS_PORT=6379
 
@@ -18,3 +17,8 @@ services:
     image: redis:latest
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
