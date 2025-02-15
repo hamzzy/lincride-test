@@ -3,5 +3,5 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    path('calculate-fare/', views.calculate_fare_api, name='calculate_fare'),
+    path('calculate-fare/', views.CalculateFareView.as_view(), name='calculate-fare'),
 ]

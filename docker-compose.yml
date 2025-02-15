@@ -1,20 +1,20 @@
-# docker-compose.yml
 version: "3.9"
-
 services:
   web:
     build: .
-    command: python manage.py runserver 0.0.0.0:8000
+    command: daphne pricing_api.asgi:application --port 8000 --bind 0.0.0.0
     volumes:
       - .:/app
     ports:
       - "8000:8000"
     depends_on:
-      - memcached
+      - redis
     environment:
-      - DJANGO_SETTINGS_MODULE=pricing_api.settings  # Adjust if necessary
+      - DJANGO_SETTINGS_MODULE=pricing_api.settings
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
 
-  memcached:
-    image: memcached:latest
+  redis:
+    image: redis:latest
     ports:
-      - "11211:11211"
+      - "6379:6379"

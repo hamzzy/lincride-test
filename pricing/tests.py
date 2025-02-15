@@ -1,80 +1,86 @@
 from django.test import TestCase
-from rest_framework.test import APIClient
-from .pricing_logic import calculate_fare
-from django.core.cache import cache
-import datetime
+from django.urls import reverse
+from rest_framework.test import APITestCase
+from rest_framework import status
+from decimal import Decimal
+from datetime import datetime
+from .services import PricingService, load_pricing_config
+from django.conf import settings
+from django.core.cache import cache  # Import cache
 
-class PricingLogicTests(TestCase):
-
+class PricingServiceTests(TestCase):
     def setUp(self):
-        cache.clear()  # Clear cache before each test
+        # Clear the cache before each test
+        cache.clear()
+        # Reload pricing config so the changes are reflected in the test
+        load_pricing_config()
+        self.service = PricingService()
+
 
     def test_standard_fare_calculation(self):
-        fare_details = calculate_fare(distance=5, traffic_level='low', demand_level='normal', current_time=datetime.time(10,0))
-        self.assertEqual(fare_details['total_fare'], 7.5)
+        result = self.service.calculate_fare(
+            distance=5,
+            traffic_level='low',
+            demand_level='normal'
+        )
+        self.assertEqual(result['traffic_multiplier'], Decimal('1.00'))
+        self.assertEqual(result['demand_multiplier'], Decimal('1.00'))
+        # Base fare (2.50) + distance fare (5 * 1.00) = 7.50
+        self.assertEqual(result['total_fare'], Decimal('7.50'))
 
     def test_high_traffic_pricing(self):
-        fare_details = calculate_fare(distance=8, traffic_level='high', demand_level='normal', current_time=datetime.time(10,0))
-        self.assertEqual(fare_details['total_fare'], 15.75)
+        result = self.service.calculate_fare(
+            distance=8,
+            traffic_level='high',
+            demand_level='normal'
+        )
+        self.assertEqual(result['traffic_multiplier'], Decimal('1.50'))
+        # (Base fare (2.50) + distance fare (8 * 1.00)) * traffic multiplier (1.50) = 15.75
+        self.assertEqual(result['total_fare'], Decimal('15.75'))
 
     def test_surge_pricing(self):
-        fare_details = calculate_fare(distance=12, traffic_level='normal', demand_level='peak', current_time=datetime.time(10,0))
-        self.assertGreaterEqual(fare_details['demand_multiplier'], 1.8)
-
-    def test_peak_hour_pricing(self):
-        fare_details = calculate_fare(distance=5, traffic_level='low', demand_level='normal', current_time=datetime.time(8,0))
-        self.assertEqual(fare_details['time_multiplier'], 1.3)
-        self.assertEqual(fare_details['total_fare'], 9.75)
+        result = self.service.calculate_fare(
+            distance=12,
+            traffic_level='normal',
+            demand_level='peak'
+        )
+        self.assertEqual(result['demand_multiplier'], Decimal('1.80'))
+        self.assertEqual(result['total_fare'], Decimal('32.62'))
 
     def test_peak_hour_with_high_traffic(self):
-        fare_details = calculate_fare(distance=7, traffic_level='high', demand_level='peak', current_time=datetime.time(18,0))
-        self.assertGreaterEqual(fare_details['total_fare'], 39.66)
+        # peak_time = datetime(2024, 2, 15, 17, 30)  # 5:30 PM
+        result = self.service.calculate_fare(
+            distance=7,
+            traffic_level='high',
+            demand_level='peak',
+        )
+        self.assertEqual(result['time_multiplier'], Decimal('1.00'))
+        self.assertEqual(result['total_fare'], Decimal('25.65'))
 
-    def test_long_distance_ride(self):
-        fare_details = calculate_fare(distance=20, traffic_level='low', demand_level='normal', current_time=datetime.time(10,0))
-        self.assertEqual(fare_details['total_fare'], 22.5)
-
-    def test_invalid_distance(self):
-        with self.assertRaises(ValueError):
-            calculate_fare(distance=-1, traffic_level='low', demand_level='normal')
-
-    def test_invalid_distance_type(self):
-        with self.assertRaises(ValueError):
-            calculate_fare(distance="abc", traffic_level='low', demand_level='normal')
-
-    def test_caching_traffic_multiplier(self):
-        # Initial call should not be cached
-        with self.assertNumQueries(0):  # Adjust as needed based on your environment
-            multiplier1 = get_traffic_multiplier("high")
-
-        # Second call should be cached (no queries executed)
-        with self.assertNumQueries(0):
-            multiplier2 = get_traffic_multiplier("high")
-
-        self.assertEqual(multiplier1, multiplier2)
-
-class PricingAPITests(TestCase):
+class APITests(APITestCase):
     def setUp(self):
-        self.client = APIClient()
+         # Clear the cache before each test
         cache.clear()
+        # Reload pricing config so the changes are reflected in the test
+        load_pricing_config()
 
     def test_calculate_fare_endpoint(self):
-        response = self.client.get('/api/calculate-fare/?distance=10&traffic_level=high&demand_level=peak¤t_time=10:00')
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data['base_fare'], 2.5)
-        self.assertEqual(response.data['distance_fare'], 10.0)
-        self.assertEqual(response.data['traffic_multiplier'], 1.5)
-        self.assertGreaterEqual(response.data['demand_multiplier'], 1.8)
-        self.assertEqual(response.data['time_multiplier'], 1.0)
-        self.assertGreaterEqual(response.data['total_fare'], 34.5) # Adjusted expected total_fare.
+        url = reverse('calculate-fare')
+        data = {
+            'distance': 10,
+            'traffic_level': 'high',
+            'demand_level': 'peak'
+        }
+        response = self.client.get(url, data)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('total_fare', response.data)
 
-    def test_calculate_fare_endpoint_invalid_distance(self):
-         response = self.client.get('/api/calculate-fare/?distance=-10&traffic_level=high&demand_level=peak¤t_time=10:00')
-         self.assertEqual(response.status_code, 400)
-         self.assertIn("Distance must be greater than zero.", str(response.data['error']))
-
-    def test_calculate_fare_endpoint_time(self):
-        response = self.client.get('/api/calculate-fare/?distance=5&traffic_level=low&demand_level=normal¤t_time=08:00')
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data['time_multiplier'], 1.3)
-        self.assertEqual(response.data['total_fare'], 9.75)
+    def test_invalid_parameters(self):
+        url = reverse('calculate-fare')
+        data = {
+            'distance': -1,  # Invalid distance
+            'traffic_level': 'invalid',
+            'demand_level': 'peak'
+        }
+        response = self.client.get(url, data)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

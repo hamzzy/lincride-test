@@ -1,29 +1,60 @@
-from rest_framework.decorators import api_view
+from rest_framework.views import APIView
 from rest_framework.response import Response
-from .pricing_logic import calculate_fare
-import datetime
+from rest_framework import status
+from ride_hailing import settings
+from .serializers import FareCalculationSerializer, FareResponseSerializer
+from .services import PricingService
+import asyncio
+import logging
 
-@api_view(['GET'])
-def calculate_fare_api(request):
-    """
-    API endpoint to calculate the ride fare based on dynamic pricing.
-    """
-    distance = float(request.query_params.get('distance', 0))
-    traffic_level = request.query_params.get('traffic_level', 'normal')
-    demand_level = request.query_params.get('demand_level', 'normal')
-    current_time_str = request.query_params.get('current_time')
+logger = logging.getLogger(__name__)
 
-    try:
-        # Optionally handle time input as a parameter
-        if current_time_str:
+class CalculateFareView(APIView):
+    def get(self, request):
+        try:
+            serializer = FareCalculationSerializer(data=request.query_params)
+            if not serializer.is_valid():
+                logger.warning(f"Invalid request parameters: {serializer.errors}")
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+            distance = serializer.validated_data['distance']
+            traffic_level = serializer.validated_data['traffic_level']
+            demand_level = serializer.validated_data['demand_level']
+
+            cache_key = f"fare:{distance}:{traffic_level}:{demand_level}"
+
+            # 1. Check Cache
+            cached_result = settings.CACHE.get(cache_key)
+            if cached_result:
+                logger.info(f"Cache hit for key: {cache_key}")
+                return Response(cached_result, status=status.HTTP_200_OK)
+
+            pricing_service = PricingService()
             try:
-                 current_time = datetime.datetime.strptime(current_time_str, '%H:%M').time()
-            except ValueError:
-                return Response({'error': 'Invalid time format. Use HH:MM'}, status=400)
-        else:
-            current_time = datetime.datetime.now().time()
+                fare_details = asyncio.run(self.calculate_fare_async(pricing_service, distance, traffic_level, demand_level))
+            except Exception as e:
+                logger.exception("Error during fare calculation in thread pool")
+                return Response({'error': 'Fare calculation failed.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        fare_details = calculate_fare(distance, traffic_level, demand_level, current_time)
-        return Response(fare_details)
-    except ValueError as e:
-        return Response({'error': str(e)}, status=400)
+            response_serializer = FareResponseSerializer(fare_details)
+            serialized_data = response_serializer.data
+
+            settings.CACHE.setdefault(cache_key, serialized_data)
+            logger.info(f"Fare calculated and cached for key: {cache_key}")
+
+            return Response(serialized_data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.exception("Unexpected error in calculate_fare_view")
+            return Response({'error': 'An unexpected error occurred.'},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    async def calculate_fare_async(self, pricing_service, distance, traffic_level, demand_level):
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            settings.THREAD_POOL_EXECUTOR,
+            pricing_service.calculate_fare,
+            distance,
+            traffic_level,
+            demand_level
+        )
